@@ -46,6 +46,10 @@ class RobotSDK:
     def get_robot_status(self):
         return self._client.get_robot_status()
 
+    def list_motors(self) -> list[str]:
+        """Return configured joint names in insertion order."""
+        return list(self.motor_configs.keys())
+
     def motor(self, joint_name: str):
         """Create a single-motor proxy for exactly one joint."""
         from .motor import Motor, MotorConfig

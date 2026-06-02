@@ -1,267 +1,273 @@
-# ROS2-Free Robot SDK Prototype
+# SDK Prototype
 
-This prototype keeps ROS2 behind an internal adapter and exposes a normal robot SDK surface.
+This package exposes a small Python SDK for robot control. The SDK is designed
+to hide ROS2 details behind a client-facing API.
 
-Recommended transport split:
+The main entry points are:
 
-- **gRPC + Protobuf** for commands and low-rate queries.
-- **ZeroMQ PUB/SUB** for local robot state monitoring.
-- **WebSocket later** for browser UI dashboards.
+- `RobotSDK` for robot-level commands and motor access
+- `Motor` for single-joint control
+- `MotorGrpcClient` and `GrpcRobotClient` for direct gRPC access
+- `GainTuner` for multi-joint tuning and motion helpers
 
-```text
-Python/C++ SDK client
-        |
-        | commands: gRPC + Protobuf
-        | state:    ZeroMQ PUB/SUB JSON
-        v
-SDK gateway process
-        |
-        | internal adapter, not exposed to SDK users
-        v
-Existing ROS2 HTTP gateway or ROS2 node bridge
-        |
-        v
-ROS2 sensors, inference/RL, safety, control, CAN I/O
-```
-
-SDK users should see methods like `enable_robot()`, `set_mode()`, and `get_robot_status()`, not ROS2 topics, services, actions, QoS, package names, or launch files.
-
-## Folder Structure
-
-```text
-sdk_prototype/
-  README.md
-  requirements.txt
-  proto/
-    robot_sdk.proto
-  python/
-    generate_grpc_python.sh
-    robot_sdk/
-      sdk.py
-      motor.py
-      gain_tuner.py
-      grpc_client.py
-      robot_sdk_pb2.py       # generated
-      robot_sdk_pb2_grpc.py  # generated
-  demo/
-    robot_sdk_demo/
-      model.py             # SDK-to-ROS2 double-pendulum control demo
-      arm_rotate.py        # SDK-to-ROS2 single-joint arm rotation demo
-```
-
-## Run
-
-Install dependencies:
+## Install
 
 ```bash
 python3 -m pip install -r sdk_prototype/requirements.txt
 ```
 
-Regenerate gRPC code after editing the proto:
+Regenerate generated gRPC files after changing the proto:
 
 ```bash
 bash sdk_prototype/python/generate_grpc_python.sh
 ```
 
-## ROS2 Motor Gateway
+## Public API
 
-The ROS2-side motor gateway is:
-
-```bash
-ros2 run motor_control_hybrid motor_sdk_gateway_node
-```
-
-It exposes `127.0.0.1:50052` and bridges SDK motor RPCs to ROS2:
-
-- `EnableMotors` -> publishes `motor_control_interfaces/MotorCommand` with `MODE_ENABLE`.
-- `DisableMotors` -> publishes `MODE_DISABLE`.
-- `SetMotorVelocity` -> publishes `MODE_VELOCITY`.
-- `SetMotorPosition` -> publishes `MODE_POSITION`.
-- `SetMotorMit` -> publishes `MODE_MOTION`.
-- `GetMotorStatus` -> reads latest `/joint_states` and `/motor_status`.
-
-Client example:
+Import from:
 
 ```python
-from sdk_prototype.python.robot_sdk.grpc_client import MotorGrpcClient
-
-motors = MotorGrpcClient("127.0.0.1:50052")
-
-joints = ["test_joint", "test_joint2"]
-print(motors.enable_motors(joints))
-print(motors.set_motor_velocity(joints, [0.5, -0.5], [10.0, 10.0]))
-print(motors.set_motor_position(joints, [0.2, -0.2], [1.0, 1.0], [40.0, 40.0], [1.5, 1.5]))
-print(motors.set_motor_mit(joints, [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [40.0, 40.0], [1.5, 1.5]))
-print(motors.get_motor_status(joints))
-print(motors.disable_motors(joints))
+from sdk_prototype.python.robot_sdk import (
+    RobotSDK,
+    Motor,
+    MotorConfig,
+    load_motor_configs_from_yaml,
+    GainTuner,
+    GrpcRobotClient,
+    MotorGrpcClient,
+)
 ```
 
-## Arm Control Registry
+### `load_motor_configs_from_yaml(config_path)`
 
-The humanoid arm demo uses this registry file:
+Load a ROS2-style motor registry YAML file and return:
+
+- key: joint name
+- value: `MotorConfig`
+
+Expected file shape:
+
+```yaml
+motor_control_node:
+  ros__parameters:
+    motors:
+      base_to_shoulder_joint:
+        motor_id: 21
+        min_position: -1.57
+        max_position: 1.57
+        kp: 40.0
+        kd: 1.5
+```
+
+Use this when you want to read motor metadata before creating SDK objects.
+
+### `RobotSDK(motor_configs=None)`
+
+High-level SDK wrapper.
+
+Methods:
+
+- `enable_robot()`
+- `disable_robot()`
+- `set_mode(mode)`
+- `load_policy(policy_id, uri)`
+- `start_policy(policy_id)`
+- `stop_policy()`
+- `set_velocity_command(vx_mps, vy_mps, wz_radps, timeout_s=0.25)`
+- `get_robot_status()`
+- `list_motors()`
+- `motor(joint_name)`
+- `gain_tuner(joint_names)`
+
+`motor(joint_name)` returns a `Motor` object bound to one joint. If the joint
+exists in `motor_configs`, the config is attached to that `Motor`.
+
+### `Motor`
+
+Single-joint helper returned by `sdk.motor(joint_name)`.
+
+Methods:
+
+- `get_motor_config()`
+- `enable()`
+- `disable()`
+- `set_velocity(velocity, acceleration=None)`
+- `set_position(position, velocity=None, kp=None, kd=None)`
+- `set_mit(position, velocity, torque_nm=None, kp=None, kd=None)`
+- `get_status()`
+
+Behavior:
+
+- `set_position()` clamps position using `min_position` and `max_position` from
+  `MotorConfig` when they exist.
+- `set_position()` and `set_mit()` use `kp` and `kd` from `MotorConfig` if the
+  caller does not pass gains.
+- If `kp` or `kd` are missing, the call raises `ValueError`.
+
+### `MotorConfig`
+
+Dataclass describing one joint entry from YAML.
+
+Fields:
+
+- `joint_name`
+- `can_interface`
+- `master_id`
+- `motor_id`
+- `actuator_type`
+- `model`
+- `direction`
+- `min_position`
+- `max_position`
+- `kp`
+- `kd`
+
+### `MotorGrpcClient`
+
+Low-level motor RPC client.
+
+Default address: `127.0.0.1:50052`
+
+Methods:
+
+- `enable_motors(joint_names)`
+- `disable_motors(joint_names)`
+- `set_motor_velocity(joint_names, velocity_radps, acceleration_radps2=None)`
+- `set_motor_position(joint_names, position_rad, velocity_radps=None, kp=None, kd=None)`
+- `set_motor_mit(joint_names, position_rad, velocity_radps, torque_nm=None, kp=None, kd=None)`
+- `get_motor_status(joint_names=None)`
+
+Use this when you want to send commands to multiple motors directly without
+creating per-joint `Motor` objects.
+
+### `GrpcRobotClient`
+
+Robot-level gRPC client.
+
+Default address: `127.0.0.1:50051`
+
+Methods:
+
+- `enable_robot()`
+- `disable_robot()`
+- `set_mode(mode)`
+- `load_policy(policy_id, uri)`
+- `start_policy(policy_id)`
+- `stop_policy()`
+- `set_velocity_command(vx_mps, vy_mps, wz_radps, timeout_s=0.25)`
+- `get_robot_status()`
+
+### `GainTuner`
+
+Multi-motor helper for control loops, hold/goto/step commands, and basic
+excitation.
+
+Create it with:
+
+```python
+tuner = GainTuner.from_client(client, joint_names, hz=60.0, motor_configs=None)
+```
+
+Methods:
+
+- `start()`
+- `stop()`
+- `hold()`
+- `step(delta_deg)`
+- `goto(angle_deg)`
+- `sine(amp_deg, freq_hz, duration_s=None)`
+- `stop_excitation()`
+- `set_kp(kp)`
+- `set_kd(kd)`
+- `status()`
+
+Utility functions in `gain_tuner.py`:
+
+- `pd_from_natural_freq(wn_rad_s, damping_ratio=1.0, inertia=1.0)`
+- `ziegler_nichols_pid(ku, tu)`
+- `suggest_initial_pd(omega_hz=1.0, damping_ratio=0.7, inertia=1.0)`
+- `motion_scale_from_temp(temp_c)`
+- `temp_state_from_temp(temp_c)`
+
+## Typical Usage
+
+### Load YAML and inspect config
+
+```python
+from sdk_prototype.python.robot_sdk import RobotSDK, load_motor_configs_from_yaml
+
+configs = load_motor_configs_from_yaml(
+    "humanoid_control/motor_control_hybrid/config/control_config.yaml"
+)
+sdk = RobotSDK(motor_configs=configs)
+
+cfg = sdk.motor_configs["base_to_shoulder_joint"]
+print(cfg.motor_id)
+print(cfg.min_position, cfg.max_position)
+```
+
+### Control one motor
+
+```python
+motor = sdk.motor("base_to_shoulder_joint")
+motor.enable()
+motor.set_position(0.45)
+motor.disable()
+```
+
+### Control multiple motors
+
+```python
+joint_names = [
+    "base_to_shoulder_joint",
+    "shoulder_to_upper_arm_joint",
+    "upper_arm_to_lower_arm_joint",
+    "lower_arm_to_wrist_joint",
+]
+
+motors = {name: sdk.motor(name) for name in joint_names}
+
+for motor in motors.values():
+    motor.enable()
+
+motors["base_to_shoulder_joint"].set_position(0.2)
+motors["shoulder_to_upper_arm_joint"].set_position(-0.2)
+
+for motor in motors.values():
+    motor.disable()
+```
+
+### Use the lower-level motor client
+
+```python
+client = MotorGrpcClient("127.0.0.1:50052")
+reply = client.enable_motors(["test_joint", "test_joint2"])
+print(reply)
+```
+
+## YAML Notes
+
+The humanoid arm config used by the demo is:
 
 ```text
 humanoid_control/motor_control_hybrid/config/control_config.yaml
 ```
 
-It contains the arm joints used by the SDK demo:
+The loader reads:
 
-- `base_to_shoulder_joint`
-- `shoulder_to_upper_arm_joint`
-- `upper_arm_to_lower_arm_joint`
-- `lower_arm_to_wrist_joint`
+- `motor_control_node.ros__parameters.motors`
+- or a flat `motors` mapping if the YAML is already flattened
 
-The `motor_id` values in that file are placeholders for local testing. Replace
-them with the real CAN IDs before driving physical hardware.
+If a joint config is missing `kp` or `kd`, `Motor.set_position()` and
+`Motor.set_mit()` will raise `ValueError` unless you pass the gains explicitly.
 
-## Test Without Motors
+## ROS2 Gateway
 
-Use the fake ROS2 motor node instead of the CAN node:
+The motor SDK talks to the ROS2-side gateway through gRPC.
 
-```bash
-source /opt/ros/humble/setup.bash
-cd humanoid_control
-colcon build --packages-select motor_control_interfaces motor_control_hybrid
-source install/setup.bash
-```
+Default endpoints:
 
-Terminal 1:
+- robot RPC: `127.0.0.1:50051`
+- motor RPC: `127.0.0.1:50052`
 
-```bash
-ros2 run motor_control_hybrid fake_motor_node
-```
-
-Terminal 2:
-
-```bash
-ros2 run motor_control_hybrid motor_sdk_gateway_node
-```
-
-Optional browser visualization:
-
-```bash
-ros2 run motor_control_hybrid double_pendulum_websocket_node
-```
-
-Open `http://127.0.0.1:8765` to see `test_joint` and `test_joint2` as a double pendulum. The page receives `/joint_states` over WebSocket and can send enable, disable, and position commands back to ROS2 through `/motor_commands`.
-
-For the humanoid arm demo, start the ROS2 side with the fake motor node and SDK gateway:
-
-```bash
-cd humanoid_control
-source install/setup.bash
-ros2 launch motor_control_hybrid hybrid_control.launch.py \
-  enable_fake_motor:=true \
-  enable_sdk_gateway:=true \
-  enable_websocket_ui:=false
-```
-
-Then run the arm demo from the repository root:
-
-```bash
-python3 sdk_prototype/demo/robot_sdk_demo/arm_rotate.py \
-  --joint base_to_shoulder_joint \
-  --target 0.45
-```
-
-If you want RViz to reflect external joint states without the manual slider GUI,
-launch the description display with:
-
-```bash
-ros2 launch humanoid_arm_description display.launch.py use_joint_state_gui:=false
-```
-
-This exercises the full SDK command path:
-
-```text
-MotorGrpcClient
-  -> gRPC MotorControl
-  -> motor_sdk_gateway_node
-  -> /motor_commands
-  -> fake_motor_node
-  -> /joint_states + /motor_status
-  -> GetMotorStatus
-```
-
-## API Shape
-
-```python
-robot.enable_robot()
-robot.set_mode("velocity")
-robot.load_policy("walk_v1", "/opt/policies/walk_v1.onnx")
-robot.start_policy("walk_v1")
-robot.set_velocity_command(vx_mps=0.2, vy_mps=0.0, wz_radps=0.1)
-status = robot.get_robot_status()
-
-robot.stop_policy()
-robot.disable_robot()
-```
-
-## Production Direction
-
-Keep one internal robot state model and publish it to multiple adapters:
-
-| Flow | Transport | Why |
-| --- | --- | --- |
-| Commands | gRPC unary RPC | Typed contract, generated Python/C++ clients, deadlines, explicit errors. |
-| Status query | gRPC unary RPC | Low-rate typed request/response. |
-| State stream | ZeroMQ PUB/SUB | Low-overhead local fanout for SDK clients, logs, and debugging tools. |
-| Browser UI | WebSocket bridge | Native browser support and easier auth/session integration. |
-
-The WebSocket server should be an adapter, not the source of truth. It should subscribe to the same state model and forward UI commands through the gRPC command client.
-
-## Recommendation
-
-Use this hybrid layout as the SDK direction:
-
-- Public command API: **gRPC + Protobuf**.
-- Local state stream: **ZeroMQ PUB/SUB**, JSON first, Protobuf payload later if schema drift becomes a problem.
-- Browser UI: **WebSocket adapter** layered on top of the gateway.
-
-## Examples (programmatic SDK)
-
-The prototype exposes a small, programmatic SDK wrapper in `python/robot_sdk`.
-`sdk.motor(joint_name)` returns a single-motor proxy. Use
-`sdk.gain_tuner(joint_names)` for multi-motor tuning/control behaviour.
-
-Minimal SDK example:
-
-```python
-from sdk_prototype.python.robot_sdk import RobotSDK
-
-sdk = RobotSDK()
-m = sdk.motor("test_joint")
-m.enable()
-m.set_position(0.5)
-```
-
-## Double-Pendulum SDK Demo
-
-The demo in `demo/robot_sdk_demo/model.py` shows the SDK driving the ROS2
-double-pendulum setup through `motor_sdk_gateway_node`.
-
-Start the ROS2 side first:
-
-```bash
-cd humanoid_control
-source install/setup.bash
-ros2 launch motor_control_hybrid hybrid_control.launch.py \
-  enable_fake_motor:=true \
-  enable_sdk_gateway:=true \
-  enable_websocket_ui:=true
-```
-
-Then run the SDK demo from the repository root:
-
-```bash
-python3 sdk_prototype/demo/robot_sdk_demo/model.py
-```
-
-Notes:
-
-- `GainTuner` (in `gain_tuner.py`) implements ramping, excitation (sine/goto/step),
-  and temperature-derating logic (ported from the RobStride tuner). Gains are
-  intentionally kept constant (no automatic kp/kd scaling); only motion ramping
-  is derated when temperatures rise.
-- For real hardware testing, run the ROS2/CAN gateway and use the SDK client
-  against `motor_sdk_gateway_node`.
+The gateway is expected to bridge SDK calls to the ROS2 motor stack.
