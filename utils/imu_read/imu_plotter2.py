@@ -101,7 +101,7 @@ def needs_integration(signals: List[str]) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Real-time plot selected IMU signals from imu_read.iter_imu_samples()")
-    parser.add_argument("--port", default="/dev/ttyUSB0", help='Serial port (Windows: "COM5")')
+    parser.add_argument("--port", default="/dev/ttyACM1", help='Serial port (Windows: "COM5")')
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--rate", type=float, default=50.0, help="Output/plot rate (Hz)")
     parser.add_argument("--window", type=float, default=10.0, help="Rolling window length (seconds)")

@@ -44,6 +44,10 @@ Notes / Assumptions
   conventions between firmware and this code.
 - This module focuses on robust tilt (roll/pitch) and an up vector; it is not
   meant to provide accurate long-term position without external aiding.
+- Translation is integrated in body coordinates after subtracting gravity in
+  body frame; this intentionally ignores world-frame transport due to rotation.
+- Treat lin_vel_ms / lin_pos_m as stationary-only diagnostics; during real
+  motion, accel/gravity leakage can dominate them quickly.
 
 Typical Usage
 -------------
@@ -132,6 +136,14 @@ def quat_rotate(q, v):
     out = quat_mul(quat_mul((x, y, z, w), vq), q_conj)
     return (out[0], out[1], out[2])
 
+def quat_rotate_inv(q, v):
+    # inverse rotation: world -> body
+    x, y, z, w = quat_normalize(q)
+    q_conj = (-x, -y, -z, w)
+    vq = (v[0], v[1], v[2], 0.0)
+    out = quat_mul(quat_mul(q_conj, vq), (x, y, z, w))
+    return (out[0], out[1], out[2])
+
 def quat_to_rpy(q):
     x, y, z, w = quat_normalize(q)
 
@@ -172,11 +184,14 @@ class RK4DeadReckoner:
 
     State:
       - q_xyzw: orientation quaternion (x,y,z,w)
-      - v: linear velocity in world [m/s]
-      - p: linear position in world [m]
+      - v: linear velocity in body [m/s]
+      - p: linear position integrated in body axes [m]
+        Use v/p only near stationary periods; they are not trustworthy for
+        general robot motion without external aiding.
 
     Still detection & bias:
-      - stationary if | |acc|-1g | < zupt_acc_g AND |gyro| < zupt_gyro_dps
+      - stationary when accel/gyro stay within stillness thresholds long enough
+        to pass hysteresis + consecutive-sample confirmation
       - if stationary: gyro_bias <- (1-a)*bias + a*gyro_raw
       - if stationary and enable_zupt: set v = 0
 
@@ -203,6 +218,7 @@ class RK4DeadReckoner:
         zupt_gyro_dps: float = 2.0,
         stationary_sensitivity_scale: float = 1.5,
         stationary_release_ratio: float = 1.25,
+        stationary_min_count: int = 5,
         debug_stationary: bool = False,
         alpha_gyro_bias: float = 0.01,
         max_dt: float = 0.2,
@@ -229,6 +245,7 @@ class RK4DeadReckoner:
         self.zupt_gyro_dps = zupt_gyro_dps
         self.stationary_sensitivity_scale = max(0.1, stationary_sensitivity_scale)
         self.stationary_release_ratio = max(1.0, stationary_release_ratio)
+        self.stationary_min_count = max(1, int(stationary_min_count))
         self.debug_stationary = debug_stationary
         self.alpha_bias = alpha_gyro_bias
         self.max_dt = max_dt
@@ -254,8 +271,9 @@ class RK4DeadReckoner:
 
         self._t_prev: Optional[float] = None
         self._omega_prev_raw: Optional[Tuple[float, float, float]] = None
-        self._a_prev_world: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._a_prev_body: Tuple[float, float, float] = (0.0, 0.0, 0.0)
         self._stationary_prev: bool = False
+        self._stationary_count = 0
 
         # for jerk gate
         self._acc_prev_ms2: Optional[Tuple[float, float, float]] = None
@@ -360,14 +378,26 @@ class RK4DeadReckoner:
 
         was_stationary = self._stationary_prev
         if was_stationary:
-            stationary = (acc_err_g < exit_acc) and (gyro_mag_dps < exit_gyro)
+            stationary_candidate = (acc_err_g < exit_acc) and (gyro_mag_dps < exit_gyro)
+            stationary = stationary_candidate
         else:
-            stationary = (acc_err_g < enter_acc) and (gyro_mag_dps < enter_gyro)
+            stationary_candidate = (acc_err_g < enter_acc) and (gyro_mag_dps < enter_gyro)
+            stationary = False
+
+        if stationary_candidate:
+            self._stationary_count = min(self._stationary_count + 1, 1_000_000)
+        else:
+            self._stationary_count = 0
+
+        if not was_stationary:
+            stationary = self._stationary_count >= self.stationary_min_count
+
         self._stationary_prev = stationary
 
         if self.debug_stationary:
             print(
-                f"[stationary] s={stationary} prev={was_stationary} "
+                f"[stationary] cand={stationary_candidate} s={stationary} prev={was_stationary} "
+                f"cnt={self._stationary_count}/{self.stationary_min_count} "
                 f"acc_err_g={acc_err_g:.4f} gyro_mag_dps={gyro_mag_dps:.3f} "
                 f"enter(acc={enter_acc:.4f},gyro={enter_gyro:.3f}) "
                 f"exit(acc={exit_acc:.4f},gyro={exit_gyro:.3f})"
@@ -377,7 +407,7 @@ class RK4DeadReckoner:
         if self._t_prev is None:
             self._t_prev = t
             self._omega_prev_raw = gyro_rads_raw
-            self._a_prev_world = (0.0, 0.0, 0.0)
+            self._a_prev_body = (0.0, 0.0, 0.0)
             self._acc_prev_ms2 = acc_ms2
             return {
                 "dt_s": None,
@@ -389,6 +419,7 @@ class RK4DeadReckoner:
                 "lin_vel_ms": self.v,
                 "lin_pos_m": self.p,
                 "acc_world_ms2": None,
+                "acc_lin_body_ms2": None,
                 "acc_lin_world_ms2": None,
                 "gyro_bias_rads": self.gyro_bias_rads,
                 "acc_gate_ok": False,
@@ -466,7 +497,9 @@ class RK4DeadReckoner:
             # measured up in body ~ acc direction (assumes acc includes gravity)
             up_meas = v_mul(1.0 / a_mag, acc_ms2)
             up_pred = quat_xyzw_to_up_body(self.q)
-            e = v_cross(up_pred, up_meas)  # body-frame error axis
+            # Measured-vs-predicted order matters here; the opposite sign drives
+            # the estimate toward an upside-down equilibrium when tilted.
+            e = v_cross(up_meas, up_pred)  # body-frame error axis
 
             omega0 = v_add(omega0, v_mul(self.kp_acc, e))
             omega1 = v_add(omega1, v_mul(self.kp_acc, e))
@@ -484,23 +517,29 @@ class RK4DeadReckoner:
         self._acc_prev_ms2 = acc_ms2
 
         acc_world = None
+        a_lin_body = None
         a_lin_world = None
         if self.integrate_translation:
             acc_world = quat_rotate(self.q, acc_ms2)
+            gravity_body = quat_rotate_inv(self.q, self.gw)
             if self.acc_includes_gravity:
+                a_lin_body = v_sub(acc_ms2, gravity_body)
                 a_lin_world = v_sub(acc_world, self.gw)
             else:
+                a_lin_body = acc_ms2
                 a_lin_world = acc_world
 
+            # Translation is only trustworthy near stationary conditions; during
+            # dynamic motion, small accel/gravity errors integrate into large drift.
             if stationary and self.enable_zupt:
                 self.v = (0.0, 0.0, 0.0)
             else:
-                self.p, self.v = self._integrate_pv_rk4(self.p, self.v, self._a_prev_world, a_lin_world, dt)
-            self._a_prev_world = a_lin_world
+                self.p, self.v = self._integrate_pv_rk4(self.p, self.v, self._a_prev_body, a_lin_body, dt)
+            self._a_prev_body = a_lin_body
         else:
             self.v = (0.0, 0.0, 0.0)
             self.p = (0.0, 0.0, 0.0)
-            self._a_prev_world = (0.0, 0.0, 0.0)
+            self._a_prev_body = (0.0, 0.0, 0.0)
 
         self._omega_prev_raw = gyro_rads_raw
 
@@ -517,6 +556,7 @@ class RK4DeadReckoner:
             "lin_vel_ms": self.v,
             "lin_pos_m": self.p,
             "acc_world_ms2": acc_world,
+            "acc_lin_body_ms2": a_lin_body,
             "acc_lin_world_ms2": a_lin_world,
             "gyro_bias_rads": self.gyro_bias_rads,
 

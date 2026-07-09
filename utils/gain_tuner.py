@@ -157,7 +157,8 @@ MOTOR_MODEL_BY_ID: Dict[int, str] = {
 }
 
 # Shared actuation safety monitor (joint-limit/jump trips)
-ACTUATION_SAFETY_ENABLED = False  # temporary: disable joint-limit safety trips for tuner testing
+ACTUATION_SAFETY_ENABLED = True
+SAFETY_MAX_STEP_DEG = 15.0
 
 # Temperature telemetry filter (thermal safety disabled)
 TEMP_SAFETY_ENABLED = False
@@ -353,14 +354,14 @@ class GainTunerMIT:
             halt_fn=self._trip_safety,
             control_hz=self.hz,
             read_hz=max(120.0, self.hz * 2.0),
-            max_step_deg=90.0,
+            max_step_deg=SAFETY_MAX_STEP_DEG,
         )
         self.safety_monitor.start()
         per_motor_hz = self.safety_monitor.read_hz / max(1, len(self.motor_states))
         print(
             f"[SAFETY] monitor started: control_hz={self.hz:.1f}, "
             f"read_hz_total={self.safety_monitor.read_hz:.1f}, per_motor~{per_motor_hz:.1f}, "
-            f"max_jump_deg=90.0"
+            f"max_jump_deg={SAFETY_MAX_STEP_DEG:.1f}"
         )
 
     def _clamp_to_limits(self, st: MotorState, logical_rad: float) -> float:

@@ -18,16 +18,16 @@ import can
 
 # RobStride protocol constants (from your repo)
 GET_DEVICE_ID = 0
-HOST_ID = 0xFF
+DEFAULT_HOST_ID = 0xFF
 
 
 def build_ext_id(comm_type: int, extra_data: int, device_id: int) -> int:
     return ((comm_type & 0x1F) << 24) | ((extra_data & 0xFFFF) << 8) | (device_id & 0xFF)
 
 
-def send_get_device_id(bus: can.Bus, device_id: int):
+def send_get_device_id(bus: can.Bus, device_id: int, host_id: int):
     msg = can.Message(
-        arbitration_id=build_ext_id(GET_DEVICE_ID, HOST_ID, device_id),
+        arbitration_id=build_ext_id(GET_DEVICE_ID, host_id, device_id),
         is_extended_id=True,
         data=b"\x00" * 8,
     )
@@ -50,6 +50,7 @@ def main():
     ap.add_argument("--end", type=int, default=10)
     ap.add_argument("--timeout", type=float, default=0.3, help="seconds to wait per ID")
     ap.add_argument("--gap", type=float, default=0.02, help="seconds between pings")
+    ap.add_argument("--host-id", type=lambda x: int(x, 0), default=DEFAULT_HOST_ID)
     args = ap.parse_args()
 
     bus = can.interface.Bus(interface="socketcan", channel=args.channel, bitrate=args.bitrate)
@@ -57,11 +58,12 @@ def main():
     found = {}  # id -> reply info
     try:
         print(f"[+] Scanning IDs {args.start}..{args.end} on {args.channel} @ {args.bitrate} bps")
+        print(f"[+] Host/main CAN ID: 0x{args.host_id:02X}")
         print("[+] Sending GET_DEVICE_ID only (no enable, no movement).")
 
         for device_id in range(int(args.start), int(args.end) + 1):
             print(f"\n[>] Ping id={device_id} ...")
-            send_get_device_id(bus, device_id)
+            send_get_device_id(bus, device_id, args.host_id)
             time.sleep(args.gap)
 
             t_end = time.time() + float(args.timeout)

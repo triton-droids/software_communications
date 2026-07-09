@@ -55,3 +55,98 @@ KeyboardInterrupt
 2026-01-23 14:11:06,573 | WARNING | MainThread | SocketcanBus was not properly shut down
 2026-01-23 14:15:45,189 | INFO | MainThread | Created a socket
 2026-01-24 14:28:39,227 | INFO | MainThread | Created a socket
+2026-05-02 14:26:51,058 | INFO | MainThread | Created a socket
+2026-05-02 14:26:51,058 | ERROR | MainThread | Could not access SocketCAN device can0 ([Errno 19] No such device)
+2026-05-02 14:41:19,388 | INFO | MainThread | Created a socket
+2026-05-02 14:41:33,347 | INFO | MainThread | Created a socket
+2026-05-02 14:41:33,558 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 14:41:37,611 | INFO | MainThread | Created a socket
+2026-05-02 14:41:47,082 | INFO | MainThread | Created a socket
+2026-05-02 14:41:47,286 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 15:00:19,083 | INFO | MainThread | Created a socket
+2026-05-02 15:03:04,174 | INFO | MainThread | Created a socket
+2026-05-02 15:09:35,925 | INFO | MainThread | Created a socket
+2026-05-02 15:10:24,356 | INFO | MainThread | Created a socket
+2026-05-02 15:14:37,233 | INFO | MainThread | Created a socket
+2026-05-02 15:28:30,123 | INFO | MainThread | Created a socket
+2026-05-02 15:30:11,038 | INFO | MainThread | Created a socket
+2026-05-02 15:31:18,825 | CRITICAL | MainThread | Traceback (most recent call last):
+  File "/home/droids/Documents/embedded/utils/gain_tuner.py", line 1315, in <module>
+    main()
+  File "/home/droids/Documents/embedded/utils/gain_tuner.py", line 1287, in main
+    motor_ids = parse_motor_ids_or_scan()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/droids/Documents/embedded/utils/gain_tuner.py", line 921, in parse_motor_ids_or_scan
+    ids = [int(x) for x in s.split()]
+           ^^^^^^
+ValueError: invalid literal for int() with base 10: 'q'
+
+2026-05-02 16:36:37,415 | INFO | MainThread | Created a socket
+2026-05-02 17:24:24,364 | INFO | MainThread | Created a socket
+2026-05-02 17:24:24,573 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 17:24:31,805 | INFO | MainThread | Created a socket
+2026-05-02 17:24:32,010 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 17:24:43,618 | INFO | MainThread | Created a socket
+2026-05-02 17:24:43,824 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 17:24:47,550 | INFO | MainThread | Created a socket
+2026-05-02 17:24:47,755 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 17:24:51,255 | INFO | MainThread | Created a socket
+2026-05-02 17:24:51,460 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 17:24:54,361 | INFO | MainThread | Created a socket
+2026-05-02 17:24:54,566 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-02 17:24:58,223 | INFO | MainThread | Created a socket
+2026-05-02 17:24:58,428 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 14:45:09,287 | INFO | MainThread | Created a socket
+2026-05-09 14:45:09,497 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 14:55:50,118 | INFO | MainThread | Created a socket
+2026-05-09 14:55:50,321 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 15:58:00,611 | INFO | MainThread | Created a socket
+2026-05-09 15:58:00,815 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 15:58:22,348 | INFO | MainThread | Created a socket
+2026-05-09 15:58:22,550 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:05:09,870 | CRITICAL | MainThread | Traceback (most recent call last):
+  File "/home/droids/Documents/embedded/utils/gain_tuner.py", line 1315, in <module>
+    main()
+  File "/home/droids/Documents/embedded/utils/gain_tuner.py", line 1287, in main
+    motor_ids = parse_motor_ids_or_scan()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/droids/Documents/embedded/utils/gain_tuner.py", line 921, in parse_motor_ids_or_scan
+    ids = [int(x) for x in s.split()]
+           ^^^^^^
+ValueError: invalid literal for int() with base 10: '0-127'
+
+2026-05-09 16:05:17,597 | INFO | MainThread | Created a socket
+2026-05-09 16:05:17,799 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:05:28,953 | INFO | MainThread | Created a socket
+2026-05-09 16:05:29,156 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:05:45,597 | INFO | MainThread | Created a socket
+2026-05-09 16:05:45,799 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:06:58,128 | INFO | MainThread | Created a socket
+2026-05-09 16:06:58,330 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:07:01,886 | INFO | MainThread | Created a socket
+2026-05-09 16:07:02,089 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:08:09,803 | INFO | MainThread | Created a socket
+2026-05-09 16:08:10,005 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:09:32,361 | INFO | MainThread | Created a socket
+2026-05-09 16:09:32,563 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:11:30,047 | INFO | MainThread | Created a socket
+2026-05-09 16:11:30,249 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:13:06,834 | INFO | MainThread | Created a socket
+2026-05-09 16:13:07,036 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:13:13,045 | INFO | MainThread | Created a socket
+2026-05-09 16:13:13,247 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:14:16,051 | INFO | MainThread | Created a socket
+2026-05-09 16:14:16,253 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:15:03,548 | INFO | MainThread | Created a socket
+2026-05-09 16:15:03,751 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:15:41,453 | INFO | MainThread | Created a socket
+2026-05-09 16:15:41,656 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:53:30,983 | INFO | MainThread | Created a socket
+2026-05-09 16:53:30,983 | ERROR | MainThread | Could not access SocketCAN device can0 ([Errno 19] No such device)
+2026-05-09 16:55:01,565 | INFO | MainThread | Created a socket
+2026-05-09 16:55:01,767 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 16:55:32,278 | INFO | MainThread | Created a socket
+2026-05-09 16:57:02,897 | INFO | MainThread | Created a socket
+2026-05-09 16:59:57,743 | INFO | MainThread | Created a socket
+2026-05-09 16:59:57,947 | WARNING | MainThread | SocketcanBus was not properly shut down
+2026-05-09 17:03:00,970 | INFO | MainThread | Created a socket
