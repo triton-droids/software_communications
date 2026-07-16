@@ -19,3 +19,14 @@ __pycache__/
 *.so
 *.a
 *.o
+
+# venv and virtual environments
+venv/
+env/
+.env
+*.venv
+
+# debug and log files
+debug.log
+*.log
+debug/
