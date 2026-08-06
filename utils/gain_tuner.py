@@ -29,8 +29,9 @@ import struct
 import threading
 import signal
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Set, List, Tuple
+from typing import Optional, Dict, Set, List, Tuple, Callable
 from collections import deque
+from imu_stream import iter_imu_samples, RK4DeadReckoner
 import traceback
 import faulthandler
 import logging
@@ -159,6 +160,16 @@ MOTOR_MODEL_BY_ID: Dict[int, str] = {
 # Shared actuation safety monitor (joint-limit/jump trips)
 ACTUATION_SAFETY_ENABLED = False  # temporary: disable joint-limit safety trips for tuner testing
 
+# -------------------- IMU Fall Detection --------------------
+IMU_ENABLED           = True
+IMU_SERIAL_PORT       = "/dev/ttyACM0"   # your ESP32 port
+IMU_BAUD              = 115200
+IMU_RATE_HZ           = 100.0
+IMU_FALL_ROLL_DEG     = 40.0
+IMU_FALL_PITCH_DEG    = 40.0
+IMU_CONFIRM_COUNT     = 3
+IMU_USE_INTEGRATOR    = True   # False = use BNO085 firmware roll/pitch directly
+
 # Temperature telemetry filter (thermal safety disabled)
 TEMP_SAFETY_ENABLED = False
 TEMP_DERATE_START_C = 65.0   # start slowing motion
@@ -241,7 +252,183 @@ class MotorState:
     step_cmd_t: float = 0.0        # epoch seconds when first changed command was sent
     step_pos0: float = 0.0         # position at that time
     last_step_delay_s: float = math.nan
+import threading
+import math
+import time
+from typing import Callable, Optional
 
+# Import from the existing imu pipeline
+from imu_stream import iter_imu_samples, RK4DeadReckoner
+
+
+class IMUFallDetector:
+    """
+    detects falls using imu data from the chest chassis and calls halt_fn
+    this class requires input data from imu_read.py, and imu_read.py
+    requires imu data to be CSV format. upload imu_read_firmware.cpp to
+    the microcontroller for output data to be in the correct format for imu_read.py
+
+    Falls back to firmware roll/pitch if integrator is not used.
+    Trips halt_fn if |roll| or |pitch| exceeds thresholds for
+    confirm_count consecutive samples.
+    """
+
+    def __init__(
+        self,
+        port: str,
+        halt_fn: Callable[[str], None],
+        baud: int = 115200,
+        rate_hz: float = 100.0,
+        fall_roll_deg: float = 40.0,
+        fall_pitch_deg: float = 40.0,
+        confirm_count: int = 3,
+        use_integrator: bool = True,
+    ):
+        self.port = port
+        self.baud = baud
+        self.halt_fn = halt_fn
+        self.rate_hz = rate_hz
+        self.fall_roll_rad  = math.radians(fall_roll_deg)
+        self.fall_pitch_rad = math.radians(fall_pitch_deg)
+        self.confirm_count  = max(1, int(confirm_count))
+        self.use_integrator = use_integrator
+
+        # Latest orientation (updated by reader thread)
+        self._roll:  float = 0.0
+        self._pitch: float = 0.0
+        self._yaw:   float = 0.0
+        self._lock = threading.Lock()
+
+        self._tripped    = False
+        self._trip_count = 0
+        self._stop_evt   = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+        # Diagnostics
+        self.samples_read = 0
+        self.errors       = 0
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_evt.clear()
+        self._tripped    = False
+        self._trip_count = 0
+        self._thread = threading.Thread(
+            target=self._loop,
+            name="imu_fall_detector",
+            daemon=True,
+        )
+        self._thread.start()
+        print(
+            f"[IMU] Fall detector started | port={self.port} "
+            f"roll_thresh={math.degrees(self.fall_roll_rad):.1f}deg "
+            f"pitch_thresh={math.degrees(self.fall_pitch_rad):.1f}deg "
+            f"confirm={self.confirm_count} "
+            f"integrator={'RK4' if self.use_integrator else 'firmware_rpy'}"
+        )
+
+    def stop(self) -> None:
+        self._stop_evt.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+    @property
+    def tripped(self) -> bool:
+        return self._tripped
+
+    def get_rpy(self):
+        """Returns (roll, pitch, yaw) in radians. Thread-safe."""
+        with self._lock:
+            return self._roll, self._pitch, self._yaw
+
+    def _check_fall(self, roll: float, pitch: float) -> None:
+        if self._tripped:
+            return
+
+        over_threshold = (
+            abs(roll)  > self.fall_roll_rad or
+            abs(pitch) > self.fall_pitch_rad
+        )
+
+        if over_threshold:
+            self._trip_count += 1
+        else:
+            self._trip_count = 0  # must be consecutive
+
+        if self._trip_count >= self.confirm_count:
+            self._tripped = True
+            reason = (
+                f"[IMU] FALL DETECTED — "
+                f"roll={math.degrees(roll):+.1f}deg "
+                f"pitch={math.degrees(pitch):+.1f}deg "
+                f"(thresh ±roll={math.degrees(self.fall_roll_rad):.1f}deg "
+                f"±pitch={math.degrees(self.fall_pitch_rad):.1f}deg "
+                f"over {self._trip_count} samples)"
+            )
+            print(reason)
+            try:
+                self.halt_fn(reason)
+            except Exception as e:
+                print(f"[IMU] halt_fn raised: {e}")
+
+    def _loop(self) -> None:
+        while not self._stop_evt.is_set():
+            try:
+                # Create integrator if requested
+                integrator = None
+                if self.use_integrator:
+                    integrator = RK4DeadReckoner(
+                        gravity_world=(0.0, 0.0, 9.80665),
+                        kp_acc=2.0,
+                        acc_gate_g=0.08,
+                        jerk_gate_ms3=10.0,
+                        gyro_gate_dps=20.0,
+                        gate_min_count=3,
+                        stationary_min_count=3,
+                    )
+
+                # iter_imu_samples handles serial open, read, parse, rate control
+                for sample in iter_imu_samples(
+                    source="serial",
+                    port=self.port,
+                    baud=self.baud,
+                    rate_hz=self.rate_hz,
+                    integrator=integrator,
+                    include_all=True,
+                ):
+                    if self._stop_evt.is_set():
+                        return
+
+                    # Prefer RK4 fused RPY if integrator is running
+                    # Fall back to firmware roll/pitch from BNO085
+                    rpy_deg = sample.get("rpy_deg")
+                    if rpy_deg is not None and self.use_integrator:
+                        roll_rad  = math.radians(rpy_deg[0])
+                        pitch_rad = math.radians(rpy_deg[1])
+                        yaw_rad   = math.radians(rpy_deg[2])
+                    else:
+                        # Use firmware roll/pitch directly from BNO085 output
+                        roll_raw  = sample.get("roll_deg")
+                        pitch_raw = sample.get("pitch_deg")
+                        if roll_raw is None or pitch_raw is None:
+                            continue
+                        roll_rad  = math.radians(roll_raw)
+                        pitch_rad = math.radians(pitch_raw)
+                        yaw_rad   = 0.0
+
+                    with self._lock:
+                        self._roll  = roll_rad
+                        self._pitch = pitch_rad
+                        self._yaw   = yaw_rad
+
+                    self.samples_read += 1
+                    self._check_fall(roll_rad, pitch_rad)
+
+            except Exception as e:
+                self.errors += 1
+                print(f"[IMU] Error in reader loop: {e}, reconnecting in 2s...")
+                time.sleep(2.0)
 
 class GainTunerMIT:
     def __init__(
@@ -286,6 +473,7 @@ class GainTunerMIT:
         self.safety_monitor: Optional[ActuationSafetyMonitor] = None
         self.safety_tripped = False
         self.safety_reason: Optional[str] = None
+        self.imu_detector: Optional[IMUFallDetector] = None
 
     def _trip_safety(self, reason: str):
         if self.safety_tripped:
@@ -362,6 +550,22 @@ class GainTunerMIT:
             f"read_hz_total={self.safety_monitor.read_hz:.1f}, per_motor~{per_motor_hz:.1f}, "
             f"max_jump_deg=90.0"
         )
+
+    def _start_imu_detector(self) -> None:
+        if not IMU_ENABLED:
+            print("[IMU] Fall detection disabled.")
+            return
+        self.imu_detector = IMUFallDetector(
+            port=IMU_SERIAL_PORT,
+            halt_fn=self._trip_safety,
+            baud=IMU_BAUD,
+            rate_hz=IMU_RATE_HZ,
+            fall_roll_deg=IMU_FALL_ROLL_DEG,
+            fall_pitch_deg=IMU_FALL_PITCH_DEG,
+            confirm_count=IMU_CONFIRM_COUNT,
+            use_integrator=IMU_USE_INTEGRATOR,
+        )
+        self.imu_detector.start()
 
     def _clamp_to_limits(self, st: MotorState, logical_rad: float) -> float:
         return clamp(logical_rad, st.limit_lo, st.limit_hi)
@@ -485,6 +689,7 @@ class GainTunerMIT:
             self.connected = True
             self.running = True
             self._start_safety_monitor()
+            self._start_imu_detector()
             if not TEMP_SAFETY_ENABLED:
                 print("[TEMP] thermal safety disabled; temperatures will still be displayed.")
             print("Connected. Motors are holding their current position (no motion).")
@@ -874,10 +1079,27 @@ class GainTunerMIT:
                 if st.last_error:
                     print(f"     error: {st.last_error}")
             print("-" * 132)
+            if self.imu_detector is not None:
+                roll, pitch, _ = self.imu_detector.get_rpy()
+                print(
+                    f"\n[IMU] port={IMU_SERIAL_PORT} "
+                    f"roll={math.degrees(roll):+.1f}deg "
+                    f"pitch={math.degrees(pitch):+.1f}deg | "
+                    f"samples={self.imu_detector.samples_read} "
+                    f"errors={self.imu_detector.errors} "
+                    f"tripped={self.imu_detector.tripped}"
+                )
+            else:
+                print("\n[IMU] Not running.")
 
     def shutdown(self):
         print("Shutting down...")
         self.running = False
+        
+        if self.imu_detector is not None:
+            self.imu_detector.stop()
+            self.imu_detector = None
+        
         if self.safety_monitor is not None:
             self.safety_monitor.stop()
             self.safety_monitor = None
