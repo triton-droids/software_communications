@@ -160,6 +160,20 @@ MOTOR_MODEL_BY_ID: Dict[int, str] = {
 # Shared actuation safety monitor (joint-limit/jump trips)
 ACTUATION_SAFETY_ENABLED = False  # temporary: disable joint-limit safety trips for tuner testing
 
+# -------------------- Torque Spike Detection --------------------
+TORQUE_SAFETY_ENABLED = True
+
+# Per-model torque limits in Nm
+# Set conservatively below the motor's rated peak torque
+TORQUE_LIMITS_NM: Dict[str, float] = {
+    "rs-04": 80.0,   # rated 40Nm, peak 120Nm — trip at ~67% of peak
+    "rs-03": 40.0,   # rated 21Nm, peak 60Nm  — trip at ~67% of peak
+    "rs-02": 12.0,   # rated 7Nm,  peak 17Nm  — trip at ~70% of peak
+}
+# ^ this should be accurate based on RobStride product info but can be adjusted based on actual torque data
+
+TORQUE_DEFAULT_LIMIT_NM = 30.0  # fallback if model not in dict
+
 # -------------------- IMU Fall Detection --------------------
 IMU_ENABLED           = True
 IMU_SERIAL_PORT       = "/dev/ttyACM0"   # your ESP32 port
@@ -252,6 +266,8 @@ class MotorState:
     step_cmd_t: float = 0.0        # epoch seconds when first changed command was sent
     step_pos0: float = 0.0         # position at that time
     last_step_delay_s: float = math.nan
+    consecutive_torque_spikes: int = 0
+
 import threading
 import math
 import time
@@ -526,6 +542,29 @@ class GainTunerMIT:
         st.velocity = float(vel) / float(st.direction)
         st.torque = float(tq)
         st.temperature = self._sanitize_temp_reading(st, temp)
+
+    def _check_torque_spikes(self, st: MotorState) -> None:
+    """
+    compares motor torque to the limits of each motor model, torque limit constants defined at top of file
+    Requires 3 consecutive over-limit readings to trip,
+    preventing single noisy samples from causing false trips.
+    """
+    if not TORQUE_SAFETY_ENABLED:
+        return
+
+    limit = TORQUE_LIMITS_NM.get(st.model, TORQUE_DEFAULT_LIMIT_NM)
+
+    if abs(st.torque) > limit:
+        st.consecutive_torque_spikes += 1
+        if st.consecutive_torque_spikes >= 3:
+            self._trip_safety(
+                f"[SAFETY] motor {st.id} ({st.model}) torque spike: "
+                f"{st.torque:.2f} Nm exceeds limit of {limit:.1f} Nm "
+                f"({st.consecutive_torque_spikes} consecutive readings)"
+            )
+    else:
+        # Reset counter — must be consecutive to trip
+        st.consecutive_torque_spikes = 0
 
     def _start_safety_monitor(self):
         if not ACTUATION_SAFETY_ENABLED:
@@ -889,6 +928,7 @@ class GainTunerMIT:
                     st.last_read_end_t = time.time()
 
                     self._update_telemetry_from_raw(st, pos, vel, tq, temp)
+                    self._check_torque_spikes(st)
                     st.last_error = None
 
                     if st.last_write_end_t > 0.0:
