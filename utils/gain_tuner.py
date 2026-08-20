@@ -190,6 +190,13 @@ HIP_CONTACT_MIN_TORQUE_NM = 0.3
 LEFT_HIP_ID  = 1
 RIGHT_HIP_ID = 6
 
+# -------------------- Communication Loss Detection --------------------
+COMMS_LOSS_ENABLED = True
+
+# How many consecutive failed reads before tripping safety
+# At 60Hz, 5 failures = ~83ms of silence from a motor
+COMMS_MAX_CONSECUTIVE_FAILURES = 5
+
 # -------------------- IMU Fall Detection --------------------
 IMU_ENABLED           = True
 IMU_SERIAL_PORT       = "/dev/ttyACM0"   # your ESP32 port
@@ -283,6 +290,7 @@ class MotorState:
     step_pos0: float = 0.0         # position at that time
     last_step_delay_s: float = math.nan
     consecutive_torque_spikes: int = 0
+    consecutive_read_failures: int = 0
 
 import threading
 import math
@@ -1001,6 +1009,8 @@ class GainTunerMIT:
                     self._check_torque_spikes(st)
                     st.last_error = None
 
+                    st.consecutive_read_failures = 0
+
                     if st.last_write_end_t > 0.0:
                         st.io_gap_ms = (st.last_read_end_t - st.last_write_end_t) * 1000.0
 
@@ -1013,9 +1023,17 @@ class GainTunerMIT:
                                 st.step_pending = False
 
                 except Exception as e:
-                    if "No response" not in str(e):
-                        st.last_error = str(e)
+                    st.consecutive_read_failures += 1
 
+                    if COMMS_LOSS_ENABLED and st.consecutive_read_failures >= COMMS_MAX_CONSECUTIVE_FAILURES:
+                        self._trip_safety(
+                            f"[SAFETY] motor {st.id} communication lost: "
+                            f"{st.consecutive_read_failures} consecutive read failures. "
+                            f"Last error: {e}"
+                        )
+                    elif "No response" not in str(e):
+                        st.last_error = str(e)
+            
             # --- immediate post-read critical check (affects next cycle) ---
             if TEMP_SAFETY_ENABLED:
                 for st in self.motor_states.values():
