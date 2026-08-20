@@ -174,6 +174,22 @@ TORQUE_LIMITS_NM: Dict[str, float] = {
 
 TORQUE_DEFAULT_LIMIT_NM = 30.0  # fallback if model not in dict
 
+# -------------------- Ground Contact Detection --------------------
+GROUND_CHECK_ENABLED = True
+
+# Ankle motor IDs
+LEFT_ANKLE_ID  = 5
+RIGHT_ANKLE_ID = 10
+
+# Minimum torque at ankle to consider the robot weight-bearing
+# Near zero means the robot is likely hanging or not on the ground
+ANKLE_CONTACT_MIN_TORQUE_NM = 0.5
+
+# Minimum hip torque — if hips show no load, robot is likely suspended
+HIP_CONTACT_MIN_TORQUE_NM = 0.3
+LEFT_HIP_ID  = 1
+RIGHT_HIP_ID = 6
+
 # -------------------- IMU Fall Detection --------------------
 IMU_ENABLED           = True
 IMU_SERIAL_PORT       = "/dev/ttyACM0"   # your ESP32 port
@@ -605,6 +621,59 @@ class GainTunerMIT:
             use_integrator=IMU_USE_INTEGRATOR,
         )
         self.imu_detector.start()
+    
+    def _check_ground_contact(self) -> bool:
+    """
+    Checks ankle and hip torques to verify the robot is
+    weight-bearing before allowing motion.
+
+    Called once during connect() after initial telemetry read.
+    Returns True if contact looks good, False if robot appears suspended.
+
+    Note: torque here is current-derived — gearbox losses mean
+    ground forces are attenuated. Thresholds must be tuned empirically.
+    """
+    if not GROUND_CHECK_ENABLED:
+        return True
+
+    warnings = []
+
+    # Check ankles
+    for ankle_id, label in [(LEFT_ANKLE_ID, "left"), (RIGHT_ANKLE_ID, "right")]:
+        st = self.motor_states.get(ankle_id)
+        if st is None:
+            continue  # motor not in this session
+        if abs(st.torque) < ANKLE_CONTACT_MIN_TORQUE_NM:
+            warnings.append(
+                f"  {label} ankle (ID {ankle_id}): "
+                f"torque={st.torque:.3f} Nm — below contact threshold "
+                f"({ANKLE_CONTACT_MIN_TORQUE_NM} Nm)"
+            )
+
+    # Check hips
+    for hip_id, label in [(LEFT_HIP_ID, "left"), (RIGHT_HIP_ID, "right")]:
+        st = self.motor_states.get(hip_id)
+        if st is None:
+            continue
+        if abs(st.torque) < HIP_CONTACT_MIN_TORQUE_NM:
+            warnings.append(
+                f"  {label} hip (ID {hip_id}): "
+                f"torque={st.torque:.3f} Nm — below contact threshold "
+                f"({HIP_CONTACT_MIN_TORQUE_NM} Nm)"
+            )
+
+    if warnings:
+        print("\n[GROUND CHECK] WARNING: Robot may not be weight-bearing:")
+        for w in warnings:
+            print(w)
+        print(
+            "[GROUND CHECK] Ensure robot is standing on the ground "
+            "before commanding motion. Continuing anyway.\n"
+        )
+        return False
+
+    print("[GROUND CHECK] Ankle and hip torques look nominal — robot appears grounded.")
+    return True
 
     def _clamp_to_limits(self, st: MotorState, logical_rad: float) -> float:
         return clamp(logical_rad, st.limit_lo, st.limit_hi)
@@ -725,6 +794,7 @@ class GainTunerMIT:
 
                     time.sleep(0.05)
 
+            self._check_ground_contact()
             self.connected = True
             self.running = True
             self._start_safety_monitor()
