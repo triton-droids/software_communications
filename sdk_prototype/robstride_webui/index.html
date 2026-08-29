@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RobStride Motor Web UI</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>RobStride Motor Web UI</h1>
+      <p id="subtitle">Direct RobStride SDK, no ROS2</p>
+    </div>
+    <div class="connection" id="connection">
+      <span class="dot"></span>
+      <span id="connectionText">Disconnected</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel motors-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Motor Status</h2>
+          <p id="summary">0 motors</p>
+        </div>
+        <button id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th><input id="selectAll" type="checkbox" checked aria-label="Select all motors"></th>
+              <th>ID</th>
+              <th>Model</th>
+              <th>State</th>
+              <th>Pos deg</th>
+              <th>Cmd deg</th>
+              <th>Vel</th>
+              <th>Torque</th>
+              <th>Temp</th>
+              <th>Kp</th>
+              <th>Kd</th>
+              <th>Dir</th>
+              <th>Loop ms</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody id="motorRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <aside class="controls">
+      <section class="panel">
+        <h2>Connection</h2>
+        <div class="button-grid">
+          <button type="button" data-action="connect">Connect</button>
+          <button type="button" data-action="disconnect" class="danger">Disconnect</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Gain Tuner Commands</h2>
+        <div class="button-grid">
+          <button type="button" data-action="hold">Hold</button>
+          <button type="button" data-action="stop_excitation">Stop Sine</button>
+        </div>
+        <label>Goto deg <input id="gotoDeg" type="number" step="1" value="0"></label>
+        <label>Step deg <input id="stepDeg" type="number" step="1" value="5"></label>
+        <div class="two-col">
+          <label>Kp <input id="kp" type="number" step="0.1" value="10"></label>
+          <label>Kd <input id="kd" type="number" step="0.01" value="0.2"></label>
+        </div>
+        <div class="two-col">
+          <label>Sine amp deg <input id="sineAmpDeg" type="number" step="1" value="5"></label>
+          <label>Sine Hz <input id="sineHz" type="number" step="0.1" value="0.8"></label>
+        </div>
+        <label>Sine duration s <input id="sineDuration" type="number" step="0.5" value="10"></label>
+        <div class="button-grid">
+          <button type="button" data-action="goto">Goto</button>
+          <button type="button" data-action="step">Step</button>
+          <button type="button" data-action="sine">Sine</button>
+          <button type="button" data-action="invert">Invert</button>
+          <button type="button" data-action="set_kp">Apply Kp</button>
+          <button type="button" data-action="set_kd">Apply Kd</button>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <h2>Events</h2>
+        <ol id="events"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

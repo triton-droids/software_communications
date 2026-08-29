@@ -189,6 +189,76 @@ Utility functions in `gain_tuner.py`:
 - `motion_scale_from_temp(temp_c)`
 - `temp_state_from_temp(temp_c)`
 
+## Motor Web UI
+
+The Web UI in `sdk_prototype/webui` shows live status for every motor in
+`humanoid_control/motor_control_hybrid/config/motors.yaml` and exposes buttons
+for the existing motor and gain-tuner commands.
+
+Start the motor gRPC gateway first:
+
+```bash
+ros2 run motor_control_hybrid motor_sdk_gateway_node
+```
+
+Then serve the UI:
+
+```bash
+python3 sdk_prototype/webui/server.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8088
+```
+
+Useful options:
+
+```bash
+python3 sdk_prototype/webui/server.py \
+  --motor-grpc-addr 127.0.0.1:50052 \
+  --config humanoid_control/motor_control_hybrid/config/motors.yaml \
+  --port 8088
+```
+
+The page polls `/api/status` at 4 Hz. Commands are sent through
+`/api/command`, which calls the existing `MotorGrpcClient` and `GainTuner`
+APIs.
+
+## Direct RobStride Web UI
+
+The Web UI in `sdk_prototype/robstride_webui` does not use ROS2 or gRPC. It
+uses `utils.robstride_gain_tuner.GainTunerMIT` directly, connects to the CAN
+bus through the RobStride SDK, and runs its own control loop.
+
+Serve the UI:
+
+```bash
+python3 sdk_prototype/robstride_webui/server.py --motor-ids "1 2 3 4 5 6 7 8 9 10"
+```
+
+Open:
+
+```text
+http://127.0.0.1:8090
+```
+
+Useful options:
+
+```bash
+python3 sdk_prototype/robstride_webui/server.py \
+  --channel can0 \
+  --bitrate 1000000 \
+  --motor-ids "1 2 3 4 5 6 7 8 9 10" \
+  --hz 60 \
+  --ramp-deg-s 30
+```
+
+The page polls `/api/status` at 4 Hz. The `Connect` button opens the RobStride
+bus and enables the selected motors. `Disconnect` stops the control loop,
+disables enabled motors, and disconnects the bus.
+
 ## Typical Usage
 
 ### Load YAML and inspect config

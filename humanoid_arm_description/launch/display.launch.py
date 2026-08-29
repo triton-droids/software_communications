@@ -69,7 +69,7 @@ def generate_launch_description():
 
     use_joint_state_gui_arg = DeclareLaunchArgument(
         'use_joint_state_gui',
-        default_value='true',
+        default_value='false',
         description='Launch joint_state_publisher_gui for manual joint tweaking',
     )
 
